@@ -1,0 +1,44 @@
+---
+Language: Cpp
+BasedOnStyle: Google
+Standard: c++11
+
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ColumnLimit: 100
+
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+
+AccessModifierOffset: -1
+NamespaceIndentation: None
+BreakBeforeBraces: Attach
+AlwaysBreakTemplateDeclarations: Yes
+
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+BinPackArguments: false
+BinPackParameters: false
+
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Main header (e.g. foo.cpp -> foo.hpp)
+  - Regex: '^"chttp2/.*"'
+    Priority: 2
+  # System / standard library headers
+  - Regex: '^<.*>'
+    Priority: 1
+  # Other local headers
+  - Regex: '.*'
+    Priority: 3
+
+ReflowComments: false
+SpaceBeforeParens: ControlStatements
+SpaceAfterCStyleCast: true
+SpacesInAngles: Never
+...

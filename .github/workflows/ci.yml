@@ -1,0 +1,237 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint — clang-format + clang-tidy.
+  # ---------------------------------------------------------------------------
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake libssl-dev catch2 clang-format clang-tidy
+
+    - name: Configure (needed for compile_commands.json)
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON
+
+    - name: clang-format
+      run: python3 scripts/lint.py --format
+
+    - name: clang-tidy
+      run: python3 scripts/lint.py --tidy
+
+  # ---------------------------------------------------------------------------
+  # Unit tests — fast, run on all platform/compiler/build-type combinations.
+  # ---------------------------------------------------------------------------
+  unit-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_type: [Release, Debug]
+        compiler: [g++, clang++]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake libssl-dev catch2
+
+    - name: Configure
+      env:
+        CXX: ${{ matrix.compiler }}
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON
+
+    - name: Build
+      run: cmake --build build --config ${{ matrix.build_type }} -j$(nproc)
+
+    - name: Test
+      run: ctest --output-on-failure -E "e2e|chaos|amalgamate"
+      working-directory: build
+
+  unit-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        build_type: [Release, Debug]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: brew install cmake openssl catch2
+
+    - name: Configure
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON \
+          -DOPENSSL_ROOT_DIR=$(brew --prefix openssl)
+
+    - name: Build
+      run: cmake --build build --config ${{ matrix.build_type }} -j$(sysctl -n hw.ncpu)
+
+    - name: Test
+      run: ctest --output-on-failure -E "e2e|chaos|amalgamate"
+      working-directory: build
+
+  # ---------------------------------------------------------------------------
+  # E2E + amalgamation — needs Go, one configuration is sufficient.
+  # ---------------------------------------------------------------------------
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake libssl-dev catch2
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Configure
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON \
+          -Dchttp2_BUILD_E2E_TESTS=ON
+
+    - name: Build
+      run: cmake --build build --config Release -j$(nproc)
+
+    - name: E2E tests
+      run: ctest --output-on-failure -R e2e
+      working-directory: build
+
+    - name: Amalgamation test
+      run: |
+        python3 scripts/amalgamate.py
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON \
+          -Dchttp2_BUILD_E2E_TESTS=ON
+        cmake --build build --config Release --target amalg_Tests -j$(nproc)
+        cd build && ctest --output-on-failure -R amalgamate
+
+  # ---------------------------------------------------------------------------
+  # Sanitizers — ASan (memory errors + leaks) and TSan (data races).
+  # ---------------------------------------------------------------------------
+  sanitize-asan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake libssl-dev catch2
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Configure
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON \
+          -Dchttp2_BUILD_E2E_TESTS=ON \
+          -Dchttp2_ENABLE_ASAN=ON
+
+    - name: Build
+      run: cmake --build build -j$(nproc)
+
+    - name: Unit + E2E tests (ASan)
+      run: ctest --output-on-failure -E "chaos|amalgamate"
+      working-directory: build
+
+  sanitize-tsan:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake libssl-dev catch2
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Configure
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON \
+          -Dchttp2_BUILD_E2E_TESTS=ON \
+          -Dchttp2_ENABLE_TSAN=ON
+
+    - name: Build
+      run: cmake --build build -j$(nproc)
+
+    - name: Unit + E2E tests (TSan)
+      run: ctest --output-on-failure -E "chaos|amalgamate"
+      working-directory: build
+
+  # ---------------------------------------------------------------------------
+  # Chaos gate — long-running, only on push to main.
+  # ---------------------------------------------------------------------------
+  chaos:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake libssl-dev catch2
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version: 'stable'
+
+    - name: Configure
+      run: |
+        cmake -S . -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -Dchttp2_ENABLE_UNIT_TESTING=ON \
+          -Dchttp2_USE_CATCH2=ON \
+          -Dchttp2_BUILD_E2E_TESTS=ON
+
+    - name: Build
+      run: cmake --build build --config Release -j$(nproc)
+
+    - name: Chaos gate test
+      run: ctest --output-on-failure -R chaos --timeout 120
+      working-directory: build
