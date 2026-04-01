@@ -9,6 +9,9 @@ struct ClientConfig {
   // Internally derived: idle = keepAliveSec, interval = keepAliveSec/6, count = 3.
   int keepAliveSec{60};
 
+  // Connect timeout in milliseconds covering DNS + TCP handshake (0 = no timeout).
+  int connectTimeoutMs{5000};
+
   // HTTP/2 PING heartbeat (0 = disabled).
   int pingIntervalSec{30};
   int pingTimeoutSec{10};

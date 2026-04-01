@@ -281,14 +281,15 @@ void TlsStreamTransport::close() {
   }
 }
 
-std::unique_ptr<IStreamTransport> StreamTransportFactory::create(const Endpoint& ep) {
+std::unique_ptr<IStreamTransport> StreamTransportFactory::create(const Endpoint& ep,
+                                                                 int connectTimeoutMs) {
   SocketFd socket;
   if (ep.type == SocketType::UNIX) {
-    socket = Connector::connectUnix(ep.sockFile);
+    socket = Connector::connectUnix(ep.sockFile, connectTimeoutMs);
   } else if (!ep.ip.empty()) {
-    socket = Connector::connectIp(ep.ip, ep.port);
+    socket = Connector::connectIp(ep.ip, ep.port, connectTimeoutMs);
   } else if (!ep.host.empty()) {
-    socket = Connector::connectDomain(ep.host, ep.port);
+    socket = Connector::connectDomain(ep.host, ep.port, connectTimeoutMs);
   } else {
     throw std::invalid_argument("Missing endpoint for stream transport");
   }

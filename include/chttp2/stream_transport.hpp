@@ -83,7 +83,7 @@ class TlsStreamTransport : public IStreamTransport {
 
 class StreamTransportFactory {
  public:
-  static std::unique_ptr<IStreamTransport> create(const Endpoint& ep);
+  static std::unique_ptr<IStreamTransport> create(const Endpoint& ep, int connectTimeoutMs = 0);
 };
 
 }  // namespace chttp2

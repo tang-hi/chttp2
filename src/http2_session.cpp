@@ -14,7 +14,7 @@ bool Http2Session::start() {
   }
 
   try {
-    transport = StreamTransportFactory::create(endpoint);
+    transport = StreamTransportFactory::create(endpoint, config.connectTimeoutMs);
   } catch (const std::exception& e) {
     CHTTP2_LOG_ERROR("session: transport creation failed: %s", e.what());
     return false;

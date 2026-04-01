@@ -9,9 +9,9 @@ namespace chttp2 {
 
 class Connector {
  public:
-  static SocketFd connectIp(const std::string& ip, uint16_t port);
-  static SocketFd connectDomain(const std::string& domain, uint16_t port);
-  static SocketFd connectUnix(const std::string& sockFile);
+  static SocketFd connectIp(const std::string& ip, uint16_t port, int timeoutMs = 0);
+  static SocketFd connectDomain(const std::string& domain, uint16_t port, int timeoutMs = 0);
+  static SocketFd connectUnix(const std::string& sockFile, int timeoutMs = 0);
 };
 
 }  // namespace chttp2

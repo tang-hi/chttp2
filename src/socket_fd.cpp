@@ -89,7 +89,11 @@ ssize_t SocketFd::write(const void* data, size_t len) const {
   if (!valid()) {
     return -1;
   }
+#if defined(__linux__)
+  return send(rawFd, data, len, MSG_NOSIGNAL);
+#else
   return send(rawFd, data, len, 0);
+#endif
 }
 
 }  // namespace chttp2
