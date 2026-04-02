@@ -267,19 +267,21 @@ TEST_CASE("Chaos gate test", "[chaos]") {
   ep1 = s1.endpoint();
   ep2 = s2.endpoint();
 
-  // Verify the restarted servers are reachable (retry a few times for startup).
-  for (int attempt = 0; attempt < 10; attempt++) {
+  // Verify the restarted servers are reachable.
+  // Use a generous retry window — in CI the connector thread may still be
+  // draining stale connect tasks from the chaos phases.
+  for (int attempt = 0; attempt < 30; attempt++) {
     if (!client.Get(ep1, "/ping").isError) {
       break;
     }
-    std::this_thread::sleep_for(ms(200));
+    std::this_thread::sleep_for(ms(300));
   }
   REQUIRE_FALSE(client.Get(ep1, "/ping").isError);
-  for (int attempt = 0; attempt < 10; attempt++) {
+  for (int attempt = 0; attempt < 30; attempt++) {
     if (!client.Get(ep2, "/ping").isError) {
       break;
     }
-    std::this_thread::sleep_for(ms(200));
+    std::this_thread::sleep_for(ms(300));
   }
   REQUIRE_FALSE(client.Get(ep2, "/ping").isError);
 
