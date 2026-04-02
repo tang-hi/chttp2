@@ -66,7 +66,7 @@ class Connection {
   int pingTimeoutSec{0};
 
   std::unique_ptr<IHttpSession> session;
-  int sessionFd{-1};
+  socket_t sessionFd{INVALID_SOCKET};
   bool connected{false};
   bool pendingPing{false};
   Reactor::TimerId pingTimerId{0};

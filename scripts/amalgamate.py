@@ -113,15 +113,27 @@ def collect_system_includes_from_headers(sorted_headers):
 
 
 def strip_header(path):
-    """Strip internal includes, #pragma once, and system includes from a header."""
+    """Strip internal includes, #pragma once, and unconditional system includes.
+
+    System includes inside #if/#ifdef blocks are preserved so that
+    platform-conditional headers (e.g. <unistd.h> in the POSIX branch of
+    platform.hpp) survive into the amalgamated output.
+    """
     lines = []
+    depth = 0
     with open(path, "r") as fh:
         for line in fh:
             if INTERNAL_INCLUDE_RE.match(line):
                 continue
             if PRAGMA_ONCE_RE.match(line):
                 continue
-            if SYSTEM_INCLUDE_RE.match(line):
+            stripped = line.strip()
+            if stripped.startswith("#if"):
+                depth += 1
+            elif stripped.startswith("#endif"):
+                depth = max(0, depth - 1)
+            # Only strip system includes at the top level; keep conditional ones.
+            if depth == 0 and SYSTEM_INCLUDE_RE.match(line):
                 continue
             lines.append(line)
     while lines and lines[0].strip() == "":

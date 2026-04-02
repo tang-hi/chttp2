@@ -32,7 +32,7 @@ class Http2Session : public IHttpSession {
 
   std::vector<SessionEvent> sendPing() override;
 
-  int pollFd() const override;
+  socket_t pollFd() const override;
   bool wantsWrite() const override;
   std::vector<SessionEvent> onReadable() override;
   void onWritable() override;

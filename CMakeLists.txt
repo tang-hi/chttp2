@@ -75,6 +75,7 @@ add_library(chttp2
   src/byte_buffer.cpp
   src/socket_fd.cpp
   src/connector.cpp
+  src/platform.cpp
   src/stream_transport.cpp
   src/http2_protocol.cpp
   src/stream.cpp
@@ -117,6 +118,10 @@ endif()
 find_package(OpenSSL REQUIRED)
 target_link_libraries(chttp2 PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 
+if(WIN32)
+  target_link_libraries(chttp2 PUBLIC ws2_32 mswsock)
+endif()
+
 set_target_properties(chttp2 PROPERTIES
   ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
   LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib"
@@ -155,8 +160,10 @@ if(chttp2_BUILD_EXAMPLES)
     examples/async_requests.cpp
     examples/timeout_cancel.cpp
     examples/client_config.cpp
-    examples/unix_socket.cpp
   )
+  if(NOT WIN32)
+    list(APPEND EXAMPLE_SOURCES examples/unix_socket.cpp)
+  endif()
   foreach(example_src ${EXAMPLE_SOURCES})
     get_filename_component(example_name ${example_src} NAME_WE)
     add_executable(${example_name} ${example_src})

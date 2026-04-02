@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "chttp2/platform.hpp"
+
 namespace chttp2 {
 
 class Reactor {
@@ -32,11 +34,11 @@ class Reactor {
 
   bool post(const Task& task);
 
-  bool registerFd(int fd,
+  bool registerFd(socket_t fd,
                   const FdHandler& readHandler,
                   const FdHandler& writeHandler = FdHandler());
-  bool unregisterFd(int fd);
-  bool enableWrite(int fd, bool enable);
+  bool unregisterFd(socket_t fd);
+  bool enableWrite(socket_t fd, bool enable);
 
   TimerId scheduleOnce(int timeoutMs, const TimerHandler& handler);
   bool cancelTimer(TimerId timerId);
@@ -65,11 +67,11 @@ class Reactor {
   void teardownPlatformPrimitives();
   void wakeup();
   void drainWakeupFd();
-  void handleFdEvent(int fd, bool readable, bool writable, bool error);
+  void handleFdEvent(socket_t fd, bool readable, bool writable, bool error);
   void fireDueTimers();
   void armNextTimerLocked();
 
-  std::unordered_map<int, FdContext> fdContexts;
+  std::unordered_map<socket_t, FdContext> fdContexts;
 
 #if defined(__linux__)
   int epollFd{-1};
@@ -79,6 +81,8 @@ class Reactor {
   int kqueueFd{-1};
   int wakeupPipe[2]{-1, -1};
   static const std::uintptr_t kTimerIdent = 0xFFFFFFFF;
+#elif defined(_WIN32)
+  socket_t wakeupPair[2]{INVALID_SOCKET, INVALID_SOCKET};
 #endif
 
   std::atomic<bool> running{false};

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "chttp2/platform.hpp"
 #include "chttp2/request.hpp"
 #include "chttp2/request_context.hpp"
 #include "chttp2/response.hpp"
@@ -36,7 +37,7 @@ class IHttpSession {
 
   virtual std::vector<SessionEvent> sendPing() = 0;
 
-  virtual int pollFd() const = 0;
+  virtual socket_t pollFd() const = 0;
   virtual bool wantsWrite() const = 0;
   virtual std::vector<SessionEvent> onReadable() = 0;
   virtual void onWritable() = 0;

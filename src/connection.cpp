@@ -39,26 +39,26 @@ bool Connection::connect() {
   }
 
   sessionFd = session->pollFd();
-  if (sessionFd < 0) {
+  if (sessionFd == INVALID_SOCKET) {
     CHTTP2_LOG_ERROR("conn %zu: invalid session fd", connId);
     session->close();
     return false;
   }
 
   connected = true;
-  CHTTP2_LOG_INFO("conn %zu: connected, sessionFd=%d", connId, sessionFd);
+  CHTTP2_LOG_INFO("conn %zu: connected, sessionFd=%d", connId, fdToInt(sessionFd));
   return true;
 }
 
 bool Connection::registerWithReactor() {
-  if (!connected || sessionFd < 0) {
+  if (!connected || sessionFd == INVALID_SOCKET) {
     return false;
   }
 
   bool registered = reactor.registerFd(
       sessionFd, [this] { onSessionReadable(); }, [this] { onSessionWritable(); });
   if (!registered) {
-    CHTTP2_LOG_ERROR("conn %zu: failed to register session fd=%d", connId, sessionFd);
+    CHTTP2_LOG_ERROR("conn %zu: failed to register session fd=%d", connId, fdToInt(sessionFd));
     connected = false;
     session->close();
     return false;
@@ -77,9 +77,9 @@ void Connection::closeOnReactor() {
   connected = false;
   cancelPingTimers();
 
-  if (sessionFd >= 0) {
+  if (sessionFd != INVALID_SOCKET) {
     reactor.unregisterFd(sessionFd);
-    sessionFd = -1;
+    sessionFd = INVALID_SOCKET;
   }
 
   if (session) {
@@ -143,7 +143,7 @@ void Connection::onSessionWritable() {
 }
 
 void Connection::updateWriteInterest() {
-  if (!session || sessionFd < 0) {
+  if (!session || sessionFd == INVALID_SOCKET) {
     return;
   }
   reactor.enableWrite(sessionFd, session->wantsWrite());
@@ -163,9 +163,9 @@ void Connection::processSessionEvents(const std::vector<SessionEvent>& events) {
       case SessionEvent::Type::SESSION_DEAD:
         connected = false;
         cancelPingTimers();
-        if (sessionFd >= 0) {
+        if (sessionFd != INVALID_SOCKET) {
           reactor.unregisterFd(sessionFd);
-          sessionFd = -1;
+          sessionFd = INVALID_SOCKET;
         }
         if (connectionLostHandler) {
           connectionLostHandler(this);

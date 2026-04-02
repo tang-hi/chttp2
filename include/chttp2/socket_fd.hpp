@@ -1,12 +1,10 @@
 #pragma once
 
 #include <cstddef>
-#include <sys/types.h>
+
+#include "chttp2/platform.hpp"
 
 namespace chttp2 {
-
-using socket_t = int;
-constexpr socket_t INVALID_SOCKET = -1;
 
 class SocketFd {
  public:

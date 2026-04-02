@@ -2,37 +2,19 @@
 
 #include <chrono>
 #include <cstring>
-#include <fcntl.h>
-#include <netdb.h>
-#include <poll.h>
 #include <stdexcept>
 #include <string>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <unistd.h>
 
 #include "chttp2/log.hpp"
+#include "chttp2/platform.hpp"
+
+#if !defined(_WIN32)
+#include <sys/un.h>
+#endif
 
 namespace chttp2 {
 
 namespace {
-
-void suppressSigpipe(socket_t fd) {
-#if defined(__APPLE__)
-  int one = 1;
-  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof(one));
-#else
-  (void) fd;
-#endif
-}
-
-bool makeNonBlocking(socket_t fd) {
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags < 0) {
-    return false;
-  }
-  return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
-}
 
 // Non-blocking connect with poll-based timeout.
 // The socket must already be in non-blocking mode.
@@ -42,7 +24,7 @@ bool connectWithTimeout(socket_t fd, const sockaddr* addr, socklen_t addrLen, in
   if (ret == 0) {
     return true;
   }
-  if (errno != EINPROGRESS) {
+  if (!isInProgress(lastSocketError())) {
     return false;
   }
 
@@ -55,35 +37,27 @@ bool connectWithTimeout(socket_t fd, const sockaddr* addr, socklen_t addrLen, in
     if (timeoutMs > 0) {
       auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - Clock::now());
       if (left.count() <= 0) {
-        errno = ETIMEDOUT;
+        setLastSocketError(SOCKET_TIMED_OUT);
         return false;
       }
       pollMs = static_cast<int>(left.count());
     }
 
-    pollfd pfd = {};
-    pfd.fd = fd;
-    pfd.events = POLLOUT;
-
-    int pollRet = ::poll(&pfd, 1, pollMs);
+    int pollRet = pollForWrite(fd, pollMs);
     if (pollRet < 0) {
-      if (errno == EINTR) {
-        continue;
-      }
       return false;
     }
     if (pollRet == 0) {
-      errno = ETIMEDOUT;
+      setLastSocketError(SOCKET_TIMED_OUT);
       return false;
     }
 
     int sockErr = 0;
-    socklen_t errLen = sizeof(sockErr);
-    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &sockErr, &errLen) != 0) {
+    if (!getSocketError(fd, &sockErr)) {
       return false;
     }
     if (sockErr != 0) {
-      errno = sockErr;
+      setLastSocketError(sockErr);
       return false;
     }
     return true;
@@ -94,6 +68,8 @@ bool connectWithTimeout(socket_t fd, const sockaddr* addr, socklen_t addrLen, in
 
 SocketFd Connector::connectIp(const std::string& ip, uint16_t port, int timeoutMs) {
   CHTTP2_LOG_DEBUG("connecting to %s:%u", ip.c_str(), port);
+
+  ensureWinsockInitialized();
 
   addrinfo hints = {};
   hints.ai_socktype = SOCK_STREAM;
@@ -116,24 +92,26 @@ SocketFd Connector::connectIp(const std::string& ip, uint16_t port, int timeoutM
   }
 
   suppressSigpipe(fd);
-  makeNonBlocking(fd);
+  chttp2::setNonBlocking(fd, true);
 
   bool ok = connectWithTimeout(fd, result->ai_addr, result->ai_addrlen, timeoutMs);
-  int err = errno;
+  int err = lastSocketError();
   freeaddrinfo(result);
 
   if (!ok) {
-    ::close(fd);
-    CHTTP2_LOG_ERROR("connect %s:%u failed: %s", ip.c_str(), port, strerror(err));
-    throw std::runtime_error(err == ETIMEDOUT ? "Connect timeout" : "Failed to connect");
+    closeSocket(fd);
+    CHTTP2_LOG_ERROR("connect %s:%u failed: %s", ip.c_str(), port, socketErrorString(err).c_str());
+    throw std::runtime_error(isTimedOut(err) ? "Connect timeout" : "Failed to connect");
   }
 
-  CHTTP2_LOG_INFO("connected to %s:%u fd=%d", ip.c_str(), port, fd);
+  CHTTP2_LOG_INFO("connected to %s:%u fd=%d", ip.c_str(), port, fdToInt(fd));
   return SocketFd(fd);
 }
 
 SocketFd Connector::connectDomain(const std::string& domain, uint16_t port, int timeoutMs) {
   CHTTP2_LOG_DEBUG("resolving %s:%u", domain.c_str(), port);
+
+  ensureWinsockInitialized();
 
   addrinfo hints = {};
   hints.ai_socktype = SOCK_STREAM;
@@ -170,16 +148,16 @@ SocketFd Connector::connectDomain(const std::string& domain, uint16_t port, int 
     }
 
     suppressSigpipe(fd);
-    makeNonBlocking(fd);
+    chttp2::setNonBlocking(fd, true);
 
     if (connectWithTimeout(fd, rp->ai_addr, rp->ai_addrlen, remaining)) {
       freeaddrinfo(result);
-      CHTTP2_LOG_INFO("connected to %s:%u fd=%d", domain.c_str(), port, fd);
+      CHTTP2_LOG_INFO("connected to %s:%u fd=%d", domain.c_str(), port, fdToInt(fd));
       return SocketFd(fd);
     }
 
-    lastError = strerror(errno);
-    ::close(fd);
+    lastError = socketErrorString(lastSocketError());
+    closeSocket(fd);
   }
 
   freeaddrinfo(result);
@@ -188,6 +166,7 @@ SocketFd Connector::connectDomain(const std::string& domain, uint16_t port, int 
 }
 
 SocketFd Connector::connectUnix(const std::string& sockFile, int timeoutMs) {
+#if !defined(_WIN32)
   CHTTP2_LOG_DEBUG("connecting to unix:%s", sockFile.c_str());
 
   socket_t fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -197,7 +176,7 @@ SocketFd Connector::connectUnix(const std::string& sockFile, int timeoutMs) {
   }
 
   suppressSigpipe(fd);
-  makeNonBlocking(fd);
+  chttp2::setNonBlocking(fd, true);
 
   sockaddr_un serverAddr = {};
   serverAddr.sun_family = AF_UNIX;
@@ -205,15 +184,20 @@ SocketFd Connector::connectUnix(const std::string& sockFile, int timeoutMs) {
 
   if (!connectWithTimeout(
           fd, reinterpret_cast<sockaddr*>(&serverAddr), sizeof(serverAddr), timeoutMs)) {
-    int err = errno;
-    ::close(fd);
-    CHTTP2_LOG_ERROR("connect unix:%s failed: %s", sockFile.c_str(), strerror(err));
-    throw std::runtime_error(err == ETIMEDOUT ? "Connect timeout"
-                                              : "Failed to connect unix socket");
+    int err = lastSocketError();
+    closeSocket(fd);
+    CHTTP2_LOG_ERROR(
+        "connect unix:%s failed: %s", sockFile.c_str(), socketErrorString(err).c_str());
+    throw std::runtime_error(isTimedOut(err) ? "Connect timeout" : "Failed to connect unix socket");
   }
 
   CHTTP2_LOG_INFO("connected to unix:%s fd=%d", sockFile.c_str(), fd);
   return SocketFd(fd);
+#else
+  (void) timeoutMs;
+  CHTTP2_LOG_ERROR("connect unix:%s failed: not supported on Windows", sockFile.c_str());
+  throw std::runtime_error("Unix sockets are not supported on Windows");
+#endif
 }
 
 }  // namespace chttp2

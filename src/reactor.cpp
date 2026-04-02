@@ -1,21 +1,19 @@
 #include "chttp2/reactor.hpp"
 
 #include <algorithm>
-#include <cerrno>
 
 #include "chttp2/log.hpp"
+#include "chttp2/platform.hpp"
 
 #if defined(__linux__)
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #include <sys/timerfd.h>
-#include <unistd.h>
 #elif defined(__APPLE__)
-#include <fcntl.h>
 #include <sys/event.h>
 #include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
+#elif defined(_WIN32)
+#include <vector>
 #endif
 
 namespace chttp2 {
@@ -24,6 +22,8 @@ bool Reactor::start() {
   if (running.load()) {
     return true;
   }
+
+  ensureWinsockInitialized();
 
   if (!setupPlatformPrimitives()) {
     CHTTP2_LOG_ERROR("reactor: failed to setup platform primitives");
@@ -83,8 +83,8 @@ bool Reactor::post(const Task& task) {
   return true;
 }
 
-bool Reactor::registerFd(int fd, const FdHandler& readHandler, const FdHandler& writeHandler) {
-  if (fd < 0 || !readHandler) {
+bool Reactor::registerFd(socket_t fd, const FdHandler& readHandler, const FdHandler& writeHandler) {
+  if (fd == INVALID_SOCKET || !readHandler) {
     return false;
   }
 
@@ -118,7 +118,7 @@ bool Reactor::registerFd(int fd, const FdHandler& readHandler, const FdHandler& 
   return true;
 }
 
-bool Reactor::unregisterFd(int fd) {
+bool Reactor::unregisterFd(socket_t fd) {
   std::lock_guard<std::mutex> lock(mutex);
   auto it = fdContexts.find(fd);
   if (it == fdContexts.end()) {
@@ -141,7 +141,7 @@ bool Reactor::unregisterFd(int fd) {
   return true;
 }
 
-bool Reactor::enableWrite(int fd, bool enable) {
+bool Reactor::enableWrite(socket_t fd, bool enable) {
   std::lock_guard<std::mutex> lock(mutex);
   auto it = fdContexts.find(fd);
   if (it == fdContexts.end()) {
@@ -212,6 +212,80 @@ bool Reactor::cancelTimer(TimerId timerId) {
 }
 
 void Reactor::runLoop() {
+#if defined(_WIN32)
+  // === Windows: select-based event loop ===
+  while (running.load()) {
+    fd_set readSet, writeSet, errorSet;
+    FD_ZERO(&readSet);
+    FD_ZERO(&writeSet);
+    FD_ZERO(&errorSet);
+
+    FD_SET(wakeupPair[0], &readSet);
+
+    std::vector<socket_t> watchedFds;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      for (const auto& kv : fdContexts) {
+        FD_SET(kv.first, &readSet);
+        FD_SET(kv.first, &errorSet);
+        if (kv.second.writeEnabled) {
+          FD_SET(kv.first, &writeSet);
+        }
+        watchedFds.push_back(kv.first);
+      }
+    }
+
+    timeval tv;
+    timeval* tvp = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex);
+      if (!timers.empty()) {
+        auto now = std::chrono::steady_clock::now();
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(timers.top().due - now);
+        long msCount = static_cast<long>(ms.count());
+        if (msCount < 1) {
+          msCount = 1;
+        }
+        tv.tv_sec = msCount / 1000;
+        tv.tv_usec = (msCount % 1000) * 1000;
+        tvp = &tv;
+      }
+    }
+
+    // On Windows, the first argument to select() is ignored.
+    int ret = ::select(0, &readSet, &writeSet, &errorSet, tvp);
+    if (ret == SOCKET_ERROR) {
+      int err = lastSocketError();
+      if (isInterrupted(err)) {
+        continue;
+      }
+      CHTTP2_LOG_ERROR("reactor: select error, err=%d", err);
+      break;
+    }
+
+    if (ret > 0) {
+      if (FD_ISSET(wakeupPair[0], &readSet)) {
+        drainWakeupFd();
+      }
+
+      for (socket_t fd : watchedFds) {
+        bool readable = FD_ISSET(fd, &readSet) != 0;
+        bool writable = FD_ISSET(fd, &writeSet) != 0;
+        bool error = FD_ISSET(fd, &errorSet) != 0;
+        if (readable || writable || error) {
+          handleFdEvent(fd, readable, writable, error);
+        }
+      }
+    }
+
+    fireDueTimers();
+    drainPostedTasks();
+  }
+
+  drainPostedTasks();
+
+#else
+  // === Linux / macOS: epoll / kqueue event loop ===
 #if defined(__linux__)
   static const int maxEvents = 32;
   epoll_event events[maxEvents];
@@ -267,6 +341,7 @@ void Reactor::runLoop() {
   }
 
   drainPostedTasks();
+#endif
 }
 
 void Reactor::drainPostedTasks() {
@@ -502,6 +577,130 @@ void Reactor::armNextTimerLocked() {
   }
 }
 
+// ============================================================================
+// Windows platform implementation (select + loopback socket pair)
+// ============================================================================
+#elif defined(_WIN32)
+
+namespace {
+
+// Create a pair of connected TCP sockets for wakeup signaling.
+// fds[0] = read end, fds[1] = write end.
+bool createSocketPair(SOCKET fds[2]) {
+  fds[0] = INVALID_SOCKET;
+  fds[1] = INVALID_SOCKET;
+
+  SOCKET listener = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (listener == INVALID_SOCKET) {
+    return false;
+  }
+
+  sockaddr_in addr = {};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+
+  if (::bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+    closesocket(listener);
+    return false;
+  }
+
+  int addrLen = sizeof(addr);
+  if (::getsockname(listener, reinterpret_cast<sockaddr*>(&addr), &addrLen) == SOCKET_ERROR) {
+    closesocket(listener);
+    return false;
+  }
+
+  if (::listen(listener, 1) == SOCKET_ERROR) {
+    closesocket(listener);
+    return false;
+  }
+
+  SOCKET connector = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (connector == INVALID_SOCKET) {
+    closesocket(listener);
+    return false;
+  }
+
+  if (::connect(connector, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
+    closesocket(connector);
+    closesocket(listener);
+    return false;
+  }
+
+  SOCKET acceptor = ::accept(listener, nullptr, nullptr);
+  closesocket(listener);
+  if (acceptor == INVALID_SOCKET) {
+    closesocket(connector);
+    return false;
+  }
+
+  // Set both sockets non-blocking.
+  u_long mode = 1;
+  ioctlsocket(connector, FIONBIO, &mode);
+  ioctlsocket(acceptor, FIONBIO, &mode);
+
+  fds[0] = acceptor;   // read end
+  fds[1] = connector;  // write end
+  return true;
+}
+
+}  // namespace
+
+bool Reactor::setupPlatformPrimitives() {
+  if (!createSocketPair(wakeupPair)) {
+    return false;
+  }
+  return true;
+}
+
+void Reactor::teardownPlatformPrimitives() {
+  if (wakeupPair[0] != INVALID_SOCKET) {
+    closesocket(wakeupPair[0]);
+    wakeupPair[0] = INVALID_SOCKET;
+  }
+  if (wakeupPair[1] != INVALID_SOCKET) {
+    closesocket(wakeupPair[1]);
+    wakeupPair[1] = INVALID_SOCKET;
+  }
+
+  std::lock_guard<std::mutex> lock(mutex);
+  fdContexts.clear();
+}
+
+void Reactor::wakeup() {
+  if (wakeupPair[1] == INVALID_SOCKET) {
+    return;
+  }
+  char one = 1;
+  ::send(wakeupPair[1], &one, 1, 0);
+}
+
+void Reactor::drainWakeupFd() {
+  char buf[64];
+  while (::recv(wakeupPair[0], buf, sizeof(buf), 0) > 0) {}
+}
+
+void Reactor::armNextTimerLocked() {
+  // Purge canceled timers from the front of the queue.
+  while (!timers.empty()) {
+    const TimerItem top = timers.top();
+    auto it = canceledTimers.find(top.id);
+    if (it != canceledTimers.end() && it->second) {
+      canceledTimers.erase(it);
+      timers.pop();
+      continue;
+    }
+    break;
+  }
+
+  // Wakeup the event loop so it recalculates the select() timeout.
+  if (wakeupPair[1] != INVALID_SOCKET) {
+    char one = 1;
+    ::send(wakeupPair[1], &one, 1, 0);
+  }
+}
+
 #endif
 
 void Reactor::fireDueTimers() {
@@ -545,7 +744,7 @@ void Reactor::fireDueTimers() {
   }
 }
 
-void Reactor::handleFdEvent(int fd, bool readable, bool writable, bool error) {
+void Reactor::handleFdEvent(socket_t fd, bool readable, bool writable, bool error) {
   FdHandler readHandler;
   FdHandler writeHandler;
   bool writeEnabled = false;

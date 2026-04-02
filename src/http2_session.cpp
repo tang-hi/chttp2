@@ -34,7 +34,7 @@ bool Http2Session::start() {
 
   started = true;
   healthy = true;
-  CHTTP2_LOG_INFO("session: started, fd=%d", pollFd());
+  CHTTP2_LOG_INFO("session: started, fd=%d", fdToInt(pollFd()));
   return true;
 }
 
@@ -168,9 +168,9 @@ std::vector<SessionEvent> Http2Session::sendPing() {
   return {};
 }
 
-int Http2Session::pollFd() const {
+socket_t Http2Session::pollFd() const {
   if (!transport) {
-    return -1;
+    return INVALID_SOCKET;
   }
   return transport->fd();
 }

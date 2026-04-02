@@ -1,7 +1,6 @@
 #include "chttp2/stream_transport.hpp"
 
 #include <algorithm>
-#include <cerrno>
 #include <cstring>
 #include <openssl/err.h>
 #include <stdexcept>
@@ -49,10 +48,11 @@ IOResult TcpStreamTransport::writeSome(const void* data, size_t len) {
   if (ret == 0) {
     return IOResult(IOState::CLOSED, 0);
   }
-  if (errno == EAGAIN || errno == EWOULDBLOCK) {
+  int err = lastSocketError();
+  if (isWouldBlock(err)) {
     return IOResult(IOState::WOULD_BLOCK, 0);
   }
-  if (errno == EPIPE || errno == ECONNRESET) {
+  if (isConnectionReset(err)) {
     return IOResult(IOState::CLOSED, 0);
   }
   return IOResult(IOState::ERROR, 0);
@@ -73,10 +73,11 @@ IOResult TcpStreamTransport::readSome(void* data, size_t len) {
   if (ret == 0) {
     return IOResult(IOState::CLOSED, 0);
   }
-  if (errno == EAGAIN || errno == EWOULDBLOCK) {
+  int err = lastSocketError();
+  if (isWouldBlock(err)) {
     return IOResult(IOState::WOULD_BLOCK, 0);
   }
-  if (errno == EPIPE || errno == ECONNRESET) {
+  if (isConnectionReset(err)) {
     return IOResult(IOState::CLOSED, 0);
   }
   return IOResult(IOState::ERROR, 0);
