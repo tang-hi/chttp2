@@ -195,7 +195,7 @@ std::vector<SessionEvent> Http2Session::onReadable() {
       CHTTP2_LOG_WARN("session: peer closed connection");
       return handleTransportFailure();
     }
-    if (io.state == IOState::ERROR) {
+    if (io.state == IOState::ERR) {
       CHTTP2_LOG_ERROR("session: read error");
       return handleTransportFailure();
     }
@@ -233,7 +233,7 @@ void Http2Session::onWritable() {
     if (io.state == IOState::WOULD_BLOCK) {
       return;
     }
-    if (io.state == IOState::CLOSED || io.state == IOState::ERROR) {
+    if (io.state == IOState::CLOSED || io.state == IOState::ERR) {
       CHTTP2_LOG_WARN("session: write failure");
       handleTransportFailure();
       return;

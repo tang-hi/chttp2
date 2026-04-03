@@ -35,7 +35,7 @@ bool TcpStreamTransport::init(int keepAliveSec) {
 
 IOResult TcpStreamTransport::writeSome(const void* data, size_t len) {
   if (!ready) {
-    return IOResult(IOState::ERROR, 0);
+    return IOResult(IOState::ERR, 0);
   }
   if (len == 0) {
     return IOResult(IOState::OK, 0);
@@ -55,12 +55,12 @@ IOResult TcpStreamTransport::writeSome(const void* data, size_t len) {
   if (isConnectionReset(err)) {
     return IOResult(IOState::CLOSED, 0);
   }
-  return IOResult(IOState::ERROR, 0);
+  return IOResult(IOState::ERR, 0);
 }
 
 IOResult TcpStreamTransport::readSome(void* data, size_t len) {
   if (!ready) {
-    return IOResult(IOState::ERROR, 0);
+    return IOResult(IOState::ERR, 0);
   }
   if (len == 0) {
     return IOResult(IOState::OK, 0);
@@ -80,7 +80,7 @@ IOResult TcpStreamTransport::readSome(void* data, size_t len) {
   if (isConnectionReset(err)) {
     return IOResult(IOState::CLOSED, 0);
   }
-  return IOResult(IOState::ERROR, 0);
+  return IOResult(IOState::ERR, 0);
 }
 
 void TcpStreamTransport::close() {
@@ -218,7 +218,7 @@ bool TlsStreamTransport::init(int keepAliveSec) {
 
 IOResult TlsStreamTransport::writeSome(const void* data, size_t len) {
   if (!ready || !ssl) {
-    return IOResult(IOState::ERROR, 0);
+    return IOResult(IOState::ERR, 0);
   }
   if (len == 0) {
     return IOResult(IOState::OK, 0);
@@ -236,12 +236,12 @@ IOResult TlsStreamTransport::writeSome(const void* data, size_t len) {
   if (err == SSL_ERROR_ZERO_RETURN) {
     return IOResult(IOState::CLOSED, 0);
   }
-  return IOResult(IOState::ERROR, 0);
+  return IOResult(IOState::ERR, 0);
 }
 
 IOResult TlsStreamTransport::readSome(void* data, size_t len) {
   if (!ready || !ssl) {
-    return IOResult(IOState::ERROR, 0);
+    return IOResult(IOState::ERR, 0);
   }
   if (len == 0) {
     return IOResult(IOState::OK, 0);
@@ -259,7 +259,7 @@ IOResult TlsStreamTransport::readSome(void* data, size_t len) {
   if (err == SSL_ERROR_ZERO_RETURN) {
     return IOResult(IOState::CLOSED, 0);
   }
-  return IOResult(IOState::ERROR, 0);
+  return IOResult(IOState::ERR, 0);
 }
 
 void TlsStreamTransport::close() {

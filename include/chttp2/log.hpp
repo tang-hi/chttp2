@@ -7,7 +7,7 @@
 
 namespace chttp2 {
 
-enum class LogLevel : std::uint8_t { DEBUG, INFO, WARN, ERROR };
+enum class LogLevel : std::uint8_t { DEBUG, INFO, WARN, ERR };
 
 using LogHandler = std::function<void(LogLevel level, const char* msg)>;
 
@@ -38,7 +38,7 @@ inline void log(LogLevel level, const char* fmt, ...) {
 #define CHTTP2_LOG_DEBUG(...) ::chttp2::log(::chttp2::LogLevel::DEBUG, __VA_ARGS__)
 #define CHTTP2_LOG_INFO(...) ::chttp2::log(::chttp2::LogLevel::INFO, __VA_ARGS__)
 #define CHTTP2_LOG_WARN(...) ::chttp2::log(::chttp2::LogLevel::WARN, __VA_ARGS__)
-#define CHTTP2_LOG_ERROR(...) ::chttp2::log(::chttp2::LogLevel::ERROR, __VA_ARGS__)
+#define CHTTP2_LOG_ERROR(...) ::chttp2::log(::chttp2::LogLevel::ERR, __VA_ARGS__)
 
 #else
 

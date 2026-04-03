@@ -100,7 +100,7 @@ int main(int argc, char** argv) {
         case chttp2::LogLevel::DEBUG: prefix = "DBG"; break;
         case chttp2::LogLevel::INFO:  prefix = "INF"; break;
         case chttp2::LogLevel::WARN:  prefix = "WRN"; break;
-        case chttp2::LogLevel::ERROR: prefix = "ERR"; break;
+        case chttp2::LogLevel::ERR: prefix = "ERR"; break;
       }
       std::fprintf(stderr, "[%s] %s\n", prefix, msg);
     });

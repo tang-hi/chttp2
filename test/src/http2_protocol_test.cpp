@@ -69,7 +69,7 @@ struct LogSetup : Catch::EventListenerBase {
         case LogLevel::WARN:
           tag = "WARN";
           break;
-        case LogLevel::ERROR:
+        case LogLevel::ERR:
           tag = "ERROR";
           break;
       }

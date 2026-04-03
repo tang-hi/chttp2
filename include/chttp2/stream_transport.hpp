@@ -15,14 +15,14 @@ enum class IOState : uint8_t {
   OK,
   WOULD_BLOCK,
   CLOSED,
-  ERROR,
+  ERR,
 };
 
 struct IOResult {
   IOState state;
   size_t bytes;
 
-  IOResult() : state(IOState::ERROR), bytes(0) {}
+  IOResult() : state(IOState::ERR), bytes(0) {}
   IOResult(IOState ioState, size_t ioBytes) : state(ioState), bytes(ioBytes) {}
 };
 
